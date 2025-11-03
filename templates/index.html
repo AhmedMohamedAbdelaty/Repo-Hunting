@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Repository Finder</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-github"></i> GitHub Repository Finder
+            </span>
+            <span class="text-light">
+                <small>Discover amazing open source projects</small>
+            </span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 mb-4">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-stars"></i> Quick Presets</h5>
+                    </div>
+                    <div class="card-body" id="presetsContainer">
+                        <div class="text-center">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <small class="d-block mt-2">Loading presets...</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm mt-3">
+                    <div class="card-header bg-secondary text-white">
+                        <h6 class="mb-0"><i class="bi bi-info-circle"></i> About</h6>
+                    </div>
+                    <div class="card-body">
+                        <small>
+                            <p class="mb-2">Search and discover GitHub repositories with advanced filters.</p>
+                            <p class="mb-0"><strong>Features:</strong></p>
+                            <ul class="small mb-0">
+                                <li>Filter by language & topics</li>
+                                <li>Star count ranges</li>
+                                <li>Time-based filtering</li>
+                                <li>Export results (JSON/CSV)</li>
+                            </ul>
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-9">
+                <!-- Search Form -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="bi bi-search"></i> Custom Search</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="searchForm">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="language" class="form-label">Programming Language</label>
+                                    <select class="form-select" id="language" name="language">
+                                        <option value="">Any Language</option>
+                                        <option value="javascript">JavaScript</option>
+                                        <option value="python">Python</option>
+                                        <option value="java">Java</option>
+                                        <option value="typescript">TypeScript</option>
+                                        <option value="csharp">C#</option>
+                                        <option value="cpp">C++</option>
+                                        <option value="php">PHP</option>
+                                        <option value="ruby">Ruby</option>
+                                        <option value="go">Go</option>
+                                        <option value="rust">Rust</option>
+                                        <option value="swift">Swift</option>
+                                        <option value="kotlin">Kotlin</option>
+                                    </select>
+                                </div>
+
+                                <div class="col-md-6 mb-3">
+                                    <label for="topics" class="form-label">Topics/Tags</label>
+                                    <input type="text" class="form-control" id="topics" name="topics"
+                                           placeholder="e.g., machine-learning, api, web">
+                                    <small class="form-text text-muted">Comma-separated list</small>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label for="minStars" class="form-label">Min Stars</label>
+                                    <input type="number" class="form-control" id="minStars" name="min_stars"
+                                           placeholder="e.g., 100" min="0">
+                                </div>
+
+                                <div class="col-md-4 mb-3">
+                                    <label for="maxStars" class="form-label">Max Stars</label>
+                                    <input type="number" class="form-control" id="maxStars" name="max_stars"
+                                           placeholder="e.g., 10000" min="0">
+                                </div>
+
+                                <div class="col-md-4 mb-3">
+                                    <label for="numRepos" class="form-label">Number of Results</label>
+                                    <input type="number" class="form-control" id="numRepos" name="num_repos"
+                                           value="10" min="1" max="100">
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="since" class="form-label">Last Updated Since</label>
+                                    <select class="form-select" id="since" name="since">
+                                        <option value="">Any Time</option>
+                                        <option value="1week">Last Week</option>
+                                        <option value="2weeks">Last 2 Weeks</option>
+                                        <option value="1month">Last Month</option>
+                                        <option value="3months">Last 3 Months</option>
+                                        <option value="6months">Last 6 Months</option>
+                                        <option value="1year">Last Year</option>
+                                        <option value="2years">Last 2 Years</option>
+                                        <option value="5years">Last 5 Years</option>
+                                    </select>
+                                </div>
+
+                                <div class="col-md-6 mb-3">
+                                    <label for="sortBy" class="form-label">Sort By</label>
+                                    <select class="form-select" id="sortBy" name="sort_by">
+                                        <option value="stars">Stars</option>
+                                        <option value="forks">Forks</option>
+                                        <option value="updated">Recently Updated</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="excludeArchived"
+                                               name="exclude_archived" checked>
+                                        <label class="form-check-label" for="excludeArchived">
+                                            Exclude Archived Repositories
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="excludeForks"
+                                               name="exclude_forks">
+                                        <label class="form-check-label" for="excludeForks">
+                                            Exclude Forked Repositories
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                                <button type="button" class="btn btn-outline-secondary" id="resetBtn">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Reset
+                                </button>
+                                <button type="submit" class="btn btn-success" id="searchBtn">
+                                    <i class="bi bi-search"></i> Search Repositories
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Results Section -->
+                <div id="resultsSection" style="display: none;">
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="bi bi-list-ul"></i> Search Results</h5>
+                            <div>
+                                <button class="btn btn-sm btn-light" id="exportJsonBtn">
+                                    <i class="bi bi-filetype-json"></i> Export JSON
+                                </button>
+                                <button class="btn btn-sm btn-light" id="exportCsvBtn">
+                                    <i class="bi bi-filetype-csv"></i> Export CSV
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="resultsInfo" class="alert alert-info mb-3"></div>
+                            <div id="resultsContainer" class="row"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loading Spinner -->
+                <div id="loadingSpinner" class="text-center" style="display: none;">
+                    <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-3">Searching GitHub repositories...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
