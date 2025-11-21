@@ -1,11 +1,20 @@
 // GitHub Repository Finder - Frontend JavaScript
 
 let currentResults = [];
+let currentPage = 1;
+let currentSeed = null;
+let isLoading = false;
+let hasMore = false;
+let currentSearchParams = {};
 
 // Load presets on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadPresets();
+    loadToken();
     setupEventListeners();
+
+    // Infinite scroll listener
+    window.addEventListener('scroll', handleScroll);
 });
 
 // Setup event listeners
@@ -14,6 +23,97 @@ function setupEventListeners() {
     document.getElementById('resetBtn').addEventListener('click', resetForm);
     document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
     document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+
+    // Token settings listeners
+    document.getElementById('saveTokenBtn').addEventListener('click', saveToken);
+    document.getElementById('clearTokenBtn').addEventListener('click', clearToken);
+}
+
+// Load token from local storage
+function loadToken() {
+    const token = localStorage.getItem('github_token');
+    if (token) {
+        document.getElementById('githubToken').value = token;
+    }
+}
+
+// Save token to local storage
+function saveToken() {
+    const token = document.getElementById('githubToken').value.trim();
+    if (token) {
+        localStorage.setItem('github_token', token);
+        showNotification('GitHub token saved locally', 'success');
+    } else {
+        showNotification('Please enter a valid token', 'warning');
+    }
+}
+
+// Clear token from local storage
+function clearToken() {
+    localStorage.removeItem('github_token');
+    document.getElementById('githubToken').value = '';
+    showNotification('GitHub token cleared', 'info');
+}
+
+// Get current token
+function getToken() {
+    return localStorage.getItem('github_token');
+}
+
+// Handle scroll for infinite loading
+function handleScroll() {
+    if (isLoading || !hasMore) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+
+    // Check if we've scrolled near the bottom (within 100px)
+    if (scrollTop + clientHeight >= scrollHeight - 100) {
+        loadMore();
+    }
+}
+
+// Load more results
+async function loadMore() {
+    if (isLoading || !hasMore) return;
+
+    isLoading = true;
+    document.getElementById('scrollSpinner').style.display = 'block';
+
+    try {
+        const params = {
+            ...currentSearchParams,
+            page: currentPage + 1,
+            seed: currentSeed,
+            github_token: getToken()
+        };
+
+        const response = await fetch('/api/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(params)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            currentPage = data.page;
+            hasMore = data.has_more;
+
+            // Append new results
+            currentResults = [...currentResults, ...data.repositories];
+            appendResults(data.repositories);
+        } else {
+            showNotification(data.error || 'Failed to load more results', 'danger');
+        }
+    } catch (error) {
+        console.error('Error loading more:', error);
+        showNotification('Error loading more results', 'danger');
+    } finally {
+        isLoading = false;
+        document.getElementById('scrollSpinner').style.display = 'none';
+    }
 }
 
 // Load presets from API
@@ -95,9 +195,23 @@ async function handleSearch(event) {
         }
     });
 
+    // Reset state for new search
+    currentSearchParams = searchParams;
+    currentPage = 1;
+    currentSeed = null;
+    hasMore = false;
+    isLoading = true;
+
+    // Add token to params
+    searchParams.github_token = getToken();
+
     // Show loading spinner
     document.getElementById('loadingSpinner').style.display = 'block';
     document.getElementById('resultsSection').style.display = 'none';
+
+    // Hide scroll spinner if visible
+    const scrollSpinner = document.getElementById('scrollSpinner');
+    if (scrollSpinner) scrollSpinner.style.display = 'none';
 
     try {
         const response = await fetch('/api/search', {
@@ -112,6 +226,10 @@ async function handleSearch(event) {
 
         if (data.success) {
             currentResults = data.repositories;
+            currentSeed = data.seed;
+            currentPage = data.page;
+            hasMore = data.has_more;
+
             displayResults(data);
         } else {
             showNotification(data.error || 'Search failed', 'danger');
@@ -120,6 +238,7 @@ async function handleSearch(event) {
         console.error('Error searching:', error);
         showNotification('Error performing search: ' + error.message, 'danger');
     } finally {
+        isLoading = false;
         document.getElementById('loadingSpinner').style.display = 'none';
     }
 }
@@ -135,7 +254,7 @@ function displayResults(data) {
     // Display info
     resultsInfo.innerHTML = `
         <strong>Found ${data.total_count.toLocaleString()} total repositories</strong><br>
-        <small>Displaying ${data.returned_count} random results</small><br>
+        <small>Displaying random results</small><br>
         <small class="text-muted">Query: ${data.query}</small>
     `;
 
@@ -148,13 +267,24 @@ function displayResults(data) {
     }
 
     // Display each repository
-    data.repositories.forEach((repo, index) => {
-        const card = createRepoCard(repo, index + 1);
-        resultsContainer.appendChild(card);
-    });
+    appendResults(data.repositories);
 
     // Scroll to results
     resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Append results to the container
+function appendResults(repos) {
+    const resultsContainer = document.getElementById('resultsContainer');
+
+    // Calculate starting index based on current results count before this append
+    // But simpler is to just use the child count
+    const startIndex = resultsContainer.children.length;
+
+    repos.forEach((repo, index) => {
+        const card = createRepoCard(repo, startIndex + index + 1);
+        resultsContainer.appendChild(card);
+    });
 }
 
 // Create a repository card

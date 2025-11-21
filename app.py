@@ -9,6 +9,7 @@ import os
 import csv
 import json
 import io
+import random
 from datetime import datetime
 
 import github_search
@@ -85,12 +86,24 @@ def search_repositories():
         # Fetch repositories
         num_repos = data.get('num_repos', 10)
         sort_by = data.get('sort_by', 'stars')
+        page = data.get('page', 1)
+        seed = data.get('seed')
+
+        # Use token from request if provided, otherwise fall back to env var
+        client_token = data.get('github_token')
+        token_to_use = client_token if client_token else GITHUB_TOKEN
+
+        # Generate a new seed if not provided and it's the first page
+        if seed is None and page == 1:
+            seed = random.randint(0, 1000000)
 
         result = github_search.fetch_repositories(
             query=query,
             num_repos=num_repos,
-            github_token=GITHUB_TOKEN,
-            sort_by=sort_by
+            github_token=token_to_use,
+            sort_by=sort_by,
+            page=page,
+            seed=seed
         )
 
         if not result['success']:
@@ -107,7 +120,10 @@ def search_repositories():
             "query": query,
             "total_count": result['total_count'],
             "returned_count": len(formatted_repos),
-            "repositories": formatted_repos
+            "repositories": formatted_repos,
+            "seed": result.get('seed'),
+            "page": result.get('page', 1),
+            "has_more": result.get('has_more', False)
         })
 
     except Exception as e:

@@ -110,19 +110,23 @@ def fetch_repositories(
     query: str,
     num_repos: int,
     github_token: Optional[str] = None,
-    sort_by: str = "stars"
+    sort_by: str = "stars",
+    page: int = 1,
+    seed: Optional[int] = None
 ) -> Dict:
     """
-    Fetch repositories from GitHub API.
+    Fetch repositories from GitHub API with randomized pagination.
 
     Args:
         query: Search query string
-        num_repos: Number of repositories to fetch
+        num_repos: Number of repositories to fetch per page
         github_token: Optional GitHub personal access token
         sort_by: Sort criteria (stars, forks, updated)
+        page: Current page number (1-based)
+        seed: Random seed for consistent page shuffling
 
     Returns:
-        Dictionary with 'success', 'repos', 'error', 'total_count'
+        Dictionary with 'success', 'repos', 'error', 'total_count', 'seed'
     """
     base_url = "https://api.github.com/search/repositories"
 
@@ -130,21 +134,58 @@ def fetch_repositories(
     if github_token:
         headers["Authorization"] = f"token {github_token}"
 
+    # GitHub API limits:
+    # - Max 100 items per page
+    # - Only the first 1000 search results are available
+    per_page = min(100, num_repos)
+    max_results = 1000
+    max_pages = max_results // per_page
+
+    # Determine which actual GitHub page to fetch
+    if seed is not None:
+        # Create a deterministic shuffle of page numbers
+        pages = list(range(1, max_pages + 1))
+        rng = random.Random(seed)
+        rng.shuffle(pages)
+
+        # If requested page is out of bounds, we're done
+        if page > len(pages):
+            return {
+                "success": True,
+                "repos": [],
+                "total_count": 0,
+                "message": "No more results.",
+                "seed": seed
+            }
+
+        github_page = pages[page - 1]
+    else:
+        # Default behavior (no randomization across pages)
+        github_page = page
+
     params = {
         "q": query,
         "sort": sort_by,
         "order": "desc",
-        "per_page": min(100, num_repos)  # Max per page is 100
+        "per_page": per_page,
+        "page": github_page
     }
 
     try:
         response = requests.get(base_url, params=params, headers=headers, timeout=10)
 
-        # Check for API rate limit
+        # Check for API rate limit or unauthorized
         if response.status_code == 403:
             return {
                 "success": False,
                 "error": "GitHub API rate limit exceeded. Consider using a GitHub token.",
+                "repos": [],
+                "total_count": 0
+            }
+        elif response.status_code == 401:
+            return {
+                "success": False,
+                "error": "Invalid GitHub Token. Please check your token and try again.",
                 "repos": [],
                 "total_count": 0
             }
@@ -160,18 +201,30 @@ def fetch_repositories(
                 "success": True,
                 "repos": [],
                 "total_count": 0,
-                "message": "No repositories found matching the criteria."
+                "message": "No repositories found matching the criteria.",
+                "seed": seed
             }
 
-        # Shuffle for randomness and select requested number
-        random.shuffle(repos)
-        selected_repos = repos[:num_repos]
+        # If we are using a seed, we don't need to shuffle the individual page results
+        # as much, but a little local shuffle doesn't hurt.
+        # By shuffling the PAGES, we pick a random chunk of the 1000 results.
+        # To make it feel even more random, we can shuffle the results within the page.
+        if seed is not None:
+             # Use a derived seed for this specific page to ensure consistency
+             # when re-fetching the same page (though we shouldn't need to)
+             page_rng = random.Random(seed + github_page)
+             page_rng.shuffle(repos)
+        else:
+             random.shuffle(repos)
 
         return {
             "success": True,
-            "repos": selected_repos,
+            "repos": repos,
             "total_count": total_count,
-            "query": query
+            "query": query,
+            "seed": seed,
+            "page": page,
+            "has_more": page < max_pages and (page * per_page) < total_count
         }
 
     except requests.exceptions.RequestException as e:
