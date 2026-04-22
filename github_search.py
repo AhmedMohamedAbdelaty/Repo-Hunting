@@ -12,6 +12,22 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
 # Time period mappings
+# Mapping from language names (as used in the app) to file extensions
+LANGUAGE_EXTENSIONS = {
+    "python": "py",
+    "javascript": "js",
+    "typescript": "ts",
+    "java": "java",
+    "csharp": "cs",
+    "cpp": "cpp",
+    "php": "php",
+    "ruby": "rb",
+    "go": "go",
+    "rust": "rs",
+    "swift": "swift",
+    "kotlin": "kt",
+}
+
 TIME_PERIODS = {
     "1week": 7,
     "2weeks": 14,
@@ -196,6 +212,19 @@ def fetch_repositories(
         repos = data.get("items", [])
         total_count = data.get("total_count", 0)
 
+        # If we got no repos but total_count > 0, we picked a page beyond actual results.
+        # Re-fetch using a page that's within the valid range.
+        if not repos and total_count > 0 and seed is not None:
+            import math
+            actual_max_pages = min(max_pages, math.ceil(total_count / per_page))
+            valid_pages = [p for p in pages if p <= actual_max_pages]
+            if valid_pages:
+                params["page"] = valid_pages[0]
+                response = requests.get(base_url, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                repos = data.get("items", [])
+
         if not repos:
             return {
                 "success": True,
@@ -265,3 +294,61 @@ def format_repository(repo: Dict) -> Dict:
         "watchers": repo.get('watchers_count', 0),
         "license": repo.get('license', {}).get('name', 'N/A') if repo.get('license') else 'N/A'
     }
+
+
+def fetch_code_file_count(
+    owner: str,
+    repo: str,
+    language: str,
+    github_token: Optional[str] = None,
+) -> Dict:
+    """
+    Count source code files for a given language in a repository using GitHub Search API.
+
+    Args:
+        owner: Repository owner login
+        repo: Repository name
+        language: Language key (e.g. 'python', 'java')
+        github_token: Optional GitHub personal access token
+
+    Returns:
+        Dict with 'success', 'count', and optional 'error'
+    """
+    extension = LANGUAGE_EXTENSIONS.get(language.lower())
+    if not extension:
+        return {"success": False, "count": None, "error": f"Unknown language: {language}"}
+
+    headers = {"Accept": "application/vnd.github+json"}
+    if github_token:
+        headers["Authorization"] = f"token {github_token}"
+
+    params = {
+        "q": f"extension:{extension} repo:{owner}/{repo}",
+        "per_page": 1,
+    }
+
+    try:
+        response = requests.get(
+            "https://api.github.com/search/code",
+            params=params,
+            headers=headers,
+            timeout=10,
+        )
+
+        if response.status_code == 403:
+            return {"success": False, "count": None, "error": "Rate limit exceeded"}
+        if response.status_code == 401:
+            return {
+                "success": False,
+                "count": None,
+                "error": "GitHub token required" if not github_token else "Invalid token"
+            }
+        if response.status_code == 422:
+            return {"success": False, "count": None, "error": "Search validation error"}
+
+        response.raise_for_status()
+        data = response.json()
+        return {"success": True, "count": data.get("total_count", 0), "extension": extension}
+
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "count": None, "error": str(e)}

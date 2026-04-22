@@ -10,7 +10,12 @@ import csv
 import json
 import io
 import random
+import logging
 from datetime import datetime
+
+# Enable request logging regardless of debug mode
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logging.getLogger('werkzeug').setLevel(logging.INFO)
 
 import github_search
 import presets
@@ -181,7 +186,7 @@ def export_csv():
             headers = [
                 'name', 'full_name', 'owner', 'stars', 'forks', 'language',
                 'description', 'url', 'topics', 'created_at', 'pushed_at',
-                'archived', 'open_issues', 'watchers', 'license'
+                'archived', 'open_issues', 'watchers', 'license', 'code_file_count'
             ]
 
             writer = csv.DictWriter(output, fieldnames=headers, extrasaction='ignore')
@@ -213,6 +218,38 @@ def export_csv():
         }), 500
 
 
+@app.route('/api/repo/code-files', methods=['POST'])
+def get_code_file_count():
+    """
+    Get the number of source code files for a specific language in a repository.
+
+    Expected JSON body:
+    {
+        "owner": "torvalds",
+        "repo": "linux",
+        "language": "c",
+        "github_token": "optional"
+    }
+    """
+    try:
+        data = request.get_json()
+        owner = data.get('owner')
+        repo = data.get('repo')
+        language = data.get('language')
+
+        if not owner or not repo or not language:
+            return jsonify({"success": False, "error": "owner, repo, and language are required"}), 400
+
+        client_token = data.get('github_token')
+        token_to_use = client_token if client_token else GITHUB_TOKEN
+
+        result = github_search.fetch_code_file_count(owner, repo, language, token_to_use)
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/time-periods', methods=['GET'])
 def get_time_periods():
     """Get available time period options."""
@@ -223,6 +260,5 @@ def get_time_periods():
 
 
 if __name__ == '__main__':
-    # Run Flask app
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

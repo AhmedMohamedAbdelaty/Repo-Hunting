@@ -1,11 +1,19 @@
 // GitHub Repository Finder - Frontend JavaScript
 
+const LANGUAGE_EXTENSIONS_JS = {
+    python: 'py', javascript: 'js', typescript: 'ts', java: 'java',
+    csharp: 'cs', cpp: 'cpp', php: 'php', ruby: 'rb',
+    go: 'go', rust: 'rs', swift: 'swift', kotlin: 'kt',
+};
+
 let currentResults = [];
 let currentPage = 1;
 let currentSeed = null;
 let isLoading = false;
 let hasMore = false;
 let currentSearchParams = {};
+let codeFileCounts = {};   // { full_name: count }
+let codeFileCountsPending = 0;
 
 // Load presets on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -104,6 +112,12 @@ async function loadMore() {
             // Append new results
             currentResults = [...currentResults, ...data.repositories];
             appendResults(data.repositories);
+
+            // Fetch code file counts for new repos
+            const language = currentSearchParams.language;
+            if (language) {
+                fetchCodeFileCounts(data.repositories, language, false);
+            }
         } else {
             showNotification(data.error || 'Failed to load more results', 'danger');
         }
@@ -201,6 +215,14 @@ async function handleSearch(event) {
     currentSeed = null;
     hasMore = false;
     isLoading = true;
+    codeFileCounts = {};
+
+    // "code_files" sort is handled client-side; send "stars" to backend
+    const backendParams = { ...searchParams };
+    const sortByCodeFiles = backendParams.sort_by === 'code_files';
+    if (sortByCodeFiles) {
+        backendParams.sort_by = 'stars';
+    }
 
     // Add token to params
     searchParams.github_token = getToken();
@@ -219,7 +241,7 @@ async function handleSearch(event) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(searchParams)
+            body: JSON.stringify(backendParams)
         });
 
         const data = await response.json();
@@ -231,6 +253,12 @@ async function handleSearch(event) {
             hasMore = data.has_more;
 
             displayResults(data);
+
+            // Fetch code file counts if a language is selected
+            const language = searchParams.language;
+            if (language) {
+                fetchCodeFileCounts(data.repositories, language, sortByCodeFiles);
+            }
         } else {
             showNotification(data.error || 'Search failed', 'danger');
         }
@@ -304,6 +332,31 @@ function createRepoCard(repo, index) {
         ? '<span class="badge bg-warning text-dark ms-2">Archived</span>'
         : '';
 
+    // Code file count badge (pre-rendered if available, else shows loading)
+    const badgeId = `code-count-${repo.full_name.replace('/', '-')}`;
+    const existingCount = codeFileCounts[repo.full_name];
+    let codeFileBadgeText, codeFileBadgeClass;
+    if (existingCount !== undefined) {
+        if (existingCount !== null) {
+            const ext = LANGUAGE_EXTENSIONS_JS[currentSearchParams.language] || currentSearchParams.language;
+            codeFileBadgeText = `${existingCount.toLocaleString()} .${ext} files`;
+            codeFileBadgeClass = 'text-info';
+        } else {
+            codeFileBadgeText = 'Count unavailable';
+            codeFileBadgeClass = 'text-muted';
+        }
+    } else if (currentSearchParams.language) {
+        codeFileBadgeText = '<span class="spinner-border spinner-border-sm" role="status"></span> counting...';
+        codeFileBadgeClass = 'text-muted';
+    } else {
+        codeFileBadgeText = '';
+        codeFileBadgeClass = '';
+    }
+
+    const codeFileLine = currentSearchParams.language
+        ? `<div class="small mb-2"><i class="bi bi-file-code"></i> <span id="${badgeId}" class="${codeFileBadgeClass}">${codeFileBadgeText}</span></div>`
+        : '';
+
     col.innerHTML = `
         <div class="card h-100 repo-card">
             <div class="card-body">
@@ -329,6 +382,7 @@ function createRepoCard(repo, index) {
                 <div class="small text-muted mb-2">
                     <i class="bi bi-clock"></i> Pushed: ${new Date(repo.pushed_at).toLocaleDateString()}
                 </div>
+                ${codeFileLine}
                 <a href="${repo.url}" target="_blank" class="btn btn-sm btn-outline-primary w-100">
                     <i class="bi bi-github"></i> View on GitHub
                 </a>
@@ -337,6 +391,126 @@ function createRepoCard(repo, index) {
     `;
 
     return col;
+}
+
+// Serial queue for GitHub Search Code API (rate limit: 30 req/min with token)
+const CODE_FILE_QUEUE = [];
+let codeFileQueueRunning = false;
+const CODE_FILE_DELAY_MS = 2200; // ~27 req/min
+
+function enqueueCodeFileRequest(fn) {
+    return new Promise((resolve, reject) => {
+        CODE_FILE_QUEUE.push({ fn, resolve, reject });
+        if (!codeFileQueueRunning) drainCodeFileQueue();
+    });
+}
+
+async function drainCodeFileQueue() {
+    codeFileQueueRunning = true;
+    while (CODE_FILE_QUEUE.length > 0) {
+        const { fn, resolve, reject } = CODE_FILE_QUEUE.shift();
+        try { resolve(await fn()); } catch (e) { reject(e); }
+        if (CODE_FILE_QUEUE.length > 0) {
+            await new Promise(r => setTimeout(r, CODE_FILE_DELAY_MS));
+        }
+    }
+    codeFileQueueRunning = false;
+}
+
+// Fetch a single repo's code file count with retry on rate limit
+async function fetchSingleCodeFileCount(repo, language, token, maxRetries = 3) {
+    const badgeId = `code-count-${repo.full_name.replace('/', '-')}`;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const response = await fetch('/api/repo/code-files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner: repo.owner, repo: repo.name, language, github_token: token })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            return { count: data.count, extension: data.extension };
+        }
+
+        if (data.error === 'Rate limit exceeded' && attempt < maxRetries) {
+            const waitSec = 60; // wait a full minute then retry
+            const badge = document.getElementById(badgeId);
+            if (badge) {
+                let remaining = waitSec;
+                const ticker = setInterval(() => {
+                    remaining--;
+                    if (badge) badge.textContent = `⏳ Rate limit — retrying in ${remaining}s`;
+                    if (remaining <= 0) clearInterval(ticker);
+                }, 1000);
+            }
+            await new Promise(r => setTimeout(r, waitSec * 1000));
+            continue;
+        }
+
+        // Non-retryable error
+        return { count: null, error: data.error };
+    }
+    return { count: null, error: 'Rate limit exceeded after retries' };
+}
+
+// Fetch code file counts for a batch of repos and update their cards
+async function fetchCodeFileCounts(repos, language, sortWhenDone) {
+    const token = getToken();
+    codeFileCountsPending += repos.length;
+
+    await Promise.allSettled(repos.map(repo =>
+        enqueueCodeFileRequest(async () => {
+            const badgeId = `code-count-${repo.full_name.replace('/', '-')}`;
+            try {
+                const result = await fetchSingleCodeFileCount(repo, language, token);
+                const { count } = result;
+                codeFileCounts[repo.full_name] = count;
+
+                const badge = document.getElementById(badgeId);
+                if (badge) {
+                    if (count !== null) {
+                        badge.textContent = `${count.toLocaleString()} .${result.extension} files`;
+                        badge.classList.remove('text-muted');
+                        badge.classList.add('text-info');
+                    } else {
+                        badge.textContent = result.error === 'GitHub token required'
+                            ? '🔑 Token required to count files'
+                            : 'Count unavailable';
+                    }
+                }
+
+                const resultRepo = currentResults.find(r => r.full_name === repo.full_name);
+                if (resultRepo) resultRepo.code_file_count = count;
+
+            } catch (e) {
+                codeFileCounts[repo.full_name] = null;
+            } finally {
+                codeFileCountsPending--;
+            }
+        })
+    ));
+
+    // If all counts are done and we need to sort, re-render sorted
+    if (sortWhenDone && codeFileCountsPending === 0) {
+        sortAndRerenderByCodeFiles();
+    }
+}
+
+// Re-render results sorted by code file count (descending)
+function sortAndRerenderByCodeFiles() {
+    const sorted = [...currentResults].sort((a, b) => {
+        const ca = a.code_file_count ?? -1;
+        const cb = b.code_file_count ?? -1;
+        return cb - ca;
+    });
+
+    const container = document.getElementById('resultsContainer');
+    container.innerHTML = '';
+    sorted.forEach((repo, index) => {
+        const card = createRepoCard(repo, index + 1);
+        container.appendChild(card);
+    });
 }
 
 // Export results as JSON
